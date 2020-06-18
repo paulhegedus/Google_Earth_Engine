@@ -53,8 +53,7 @@ var smapPY = 1;
 var years = ['2000'];
 
 // String of farms (assets that are ingested alread) to loop over (NEED to add others when you have them)
-//var farms = ['broyles_columbus','broyles_rapelje','bailey_fortbenton','loewen_steinbach','merja_cascade','merja_sunriver','merja_vaughn','norgaard_shonkin','oconnor_ekalaka','quinn_bigsandy','wood_carter','wood_loma','wood_virgelle','vandyke_gallatin']; //
-var farms = ['vandyke_gallatin']; //
+var farms = ['<farmer>_<farmname>']; // i.e. ['smith_famfarm','jones_farmtwo']
 
 var j=0;
 for(j; j < years.length; j++){
