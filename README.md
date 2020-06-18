@@ -1,5 +1,5 @@
-# Google_Earth_Engine
-Paul Hegedus' Google Earth Engine scripts. This repo includes code for various projects.
+# Google Earth Engine Code
+Paul Hegedus' Google Earth Engine (GEE) scripts. This repo includes code for various projects.
 
 
 + OFPE - On-Farm Precision Experiments
