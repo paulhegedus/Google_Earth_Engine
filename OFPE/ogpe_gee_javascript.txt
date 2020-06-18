@@ -1,6 +1,11 @@
 // Script for collecting all farms GEE variables for a specified set/sequence of year(s)
 // Paul Hegedus - 20191109
-// This code runs in Google Earth Engine Code Editor.
+// This code runs in Google Earth Engine Code Editor. Follow the links below to set up and prepare 
+// Google Drive.
+// https://paulhegedus.github.io/OFPE-Website/gee_setup.html
+// https://paulhegedus.github.io/OFPE-Website/gd_setup.html
+// Most importantly, the link below, for using this code;
+// https://paulhegedus.github.io/OFPE-Website/run_gee.html
 
 //----------------------------------------------------------------
 // Assets (COPY AND PASTE, UNCOMMENT, & IMPORT)
@@ -18,18 +23,11 @@
 
 // Note that not all of the sources above are used, but are options.
 
+// Again, see https://paulhegedus.github.io/OFPE-Website/run_gee.html for the description and tutorial on
+// how to use this code.
+
 // This code is for looping through a sequence of specified years for all farms 
-// and downloading all GEE variables for a specified year. The code takes the user selected years
-// and downloads all data for that year up until 03/30. It also downloads the full year's worth of 
-// data for the previous year. This means that the least recent year of data in the database will be 
-// 1 minus the least recent year specified in the user selection. The user can select a sequence of years
-// in order, or a string of years to download data for. This code was developed for efficiently downloading
-// previous years data from GEE. However, because the user can specify specific years, this code can be used as
-// the annual run once per year and will download all the variables 
-// needed for all the farms for the current year (up to mar) and previous year (full year) when 1 year is specified.
-// In the database these are distinguished by a column labeled 'mar' or 'full' for up to march
-// and full year, respectively. Note that water years are from november 1 to october 31. 
-// User also has control over what variables to collect so not all vars are collected if not desired.
+// and downloading all GEE variables for a specified year. 
 
 // Precipitation and growing degree day information is collected from GRIDMET by the Idaho EPSCoR project
 // and is 4 km resolution with data available from 1979. It is also collected from Daymet V3, by the 
@@ -88,6 +86,68 @@ var years = ['2000','2001','2002','2003','2004','2005','2006','2007','2008','200
 
 // String of farms (assets that are ingested already) to loop over (NEED to add others when you have them)
 var farms = ['<farmer>_<farmname>','<farmer>_<farmname>','<farmer>_<farmname>', etc.]; //
+
+//----------------------------------------------------------------
+// Functions
+//----------------------------------------------------------------
+// Calculate GDD Functions
+var gddV3 = function(image){
+  var days = image.expression('(tmax + tmin)/2 - 0', {
+    'tmin': image.select('tmin'),
+    'tmax': image.select('tmax')
+  });
+  return days.rename(['gdd']).updateMask(days.gt(0));
+};
+var gdd = function(image){
+  var days = image.expression('(tmmn + tmmx)/2 - (0 + 273.15)', {
+    'tmmn': image.select('tmmn'),
+    'tmmx': image.select('tmmx')
+  });
+  return days.rename(['gdd']).updateMask(days.gt(0));
+};
+// Define a function to convert from degrees to radians for aspect
+var radians = function(img) {
+  return img.toFloat().multiply(Math.PI).divide(180);
+};
+// Function to mask clouds using the Sentinel-2 QA band.
+var maskS2clouds = function(image) {
+  var qa = image.select('QA60');
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
+    qa.bitwiseAnd(cirrusBitMask).eq(0));
+  // Return the masked and scaled data, without the QA bands.
+  return image.updateMask(mask).divide(10000)
+    .select("B.*")
+    .copyProperties(image, ["system:time_start"]);
+};
+// Function to mask clouds using the Landsat 8 bands
+var maskL8sr = function(image) {
+  // Bits 3 and 5 are cloud shadow and cloud, respectively.
+  var cloudShadowBitMask = (1 << 3);
+  var cloudsBitMask = (1 << 5);
+  // Get the pixel QA band.
+  var qa = image.select('pixel_qa');
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
+    .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
+  return image.updateMask(mask);
+};
+// calculates ndvi @ 30m resolution from Landsat 4, 5, and 7 surface reflectance
+var cloudMaskL457 = function(image) {
+  var qa = image.select('pixel_qa');
+  // If the cloud bit (5) is set and the cloud confidence (7) is high
+  // or the cloud shadow bit is set (3), then it's a bad pixel.
+  var cloud = qa.bitwiseAnd(1 << 5)
+    .and(qa.bitwiseAnd(1 << 7))
+    .or(qa.bitwiseAnd(1 << 3));
+  // Remove edge pixels that don't occur in all bands
+  var mask2 = image.mask().reduce(ee.Reducer.min());
+  return image.updateMask(cloud.not()).updateMask(mask2);
+};
+
 //****************************************************************
 // START CODE
 //****************************************************************
@@ -176,14 +236,6 @@ for(j; j < years.length; j++){
     // GDD CY
     if(gddCY==1){
       var grow_yr = CY;
-      // Calculate GDD Function
-      var gddV3 = function(image){
-        var days = image.expression('(tmax + tmin)/2 - 0', {
-          'tmin': image.select('tmin'),
-          'tmax': image.select('tmax')
-        });
-        return days.rename(['gdd']).updateMask(days.gt(0));
-      };
       //use this block for gdd from jan 1 to mar 30 of current yr (current year)
       var gdd_cy = daymet 
         .filterDate(grow_yr.toString(), (grow_yr + 1).toString())
@@ -208,14 +260,6 @@ for(j; j < years.length; j++){
     // GDD PY
     if(gddPY==1){
       var grow_PrevYr = PY;
-      // Calculate GDD Function
-      var gddV3 = function(image){
-        var days = image.expression('(tmin + tmax)/2 - 0', {
-          'tmin': image.select('tmin'),
-          'tmax': image.select('tmax')
-        });
-        return days.rename(['gdd']).updateMask(days.gt(0));
-      };
       // use this block for gdd from jan 1 thru jun 30 of prev grow yr (prev yr)
       var gdd_py = daymet
         .filterDate(grow_PrevYr.toString(), (grow_PrevYr + 1).toString())
@@ -237,298 +281,189 @@ for(j; j < years.length; j++){
       });
     } // END PY GDD   
     //---------------------------------------------------------
-    if(farms[i]!='loewen_steinbach'){ // IF NOT CANADA get GRIDMET
-      //---------------------------------------------------------
-      // Climate variables in the USA colleceted from UofIdaho
-      // GRIDMET dataset (4km)
-      //----------------------------------------------------------------
-      // Precipitation
-      //----------------------------------------------------------------
-      // PREC CY
-      if(precCY==1){
-        //use month-day of 11-01 and 03-30 for prec thru march of current grow yr, 
-        var currYear = CY;
-        var startDate = PY + '-11-01';
-        var endDate =  CY + '-03-30';
-        // select for precip data
-        var precip = gridmet.select('pr')
-          .filterDate(startDate, endDate)
-          .sum();
-        // Clip Precip images
-        var mask = ee.FeatureCollection(farm_name);
-        var mask_geometry = mask.geometry().bounds();
-        var precip_sum_cy_clipped = precip.clip(mask);
-        //export to google drive        
-        Export.image.toDrive({
-          image: precip_sum_cy_clipped,
-          description: current_farm + '_4km_gridmet_prec_currYr_' + currYear,
-          folder:'GEE_Surfaces',
-          crs: 'EPSG:4326', // saves it as long lat wgs84 (reprojected for spatial analysis)
-          scale: 10,
-          region: mask_geometry
-        });
-      } // END PREC CY
-      //----------------------------------------------------------------
-      // PREC PY
-      if(precPY==1){
-        //use 11-01 and 10-31 for prev grow yr
-        var prevYear = PY;
-        var startDate = PY-1 +'-11-01';
-        var endDate =  PY + '-10-31';
-        // select for precip data
-        var precip = gridmet.select('pr')
-          .filterDate(startDate, endDate)
-          .sum();
-        // Clip Precip images
-        var mask = ee.FeatureCollection(farm_name);
-        var mask_geometry = mask.geometry().bounds();
-        var precip_sum_py_clipped = precip.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: precip_sum_py_clipped,
-          description: current_farm + '_4km_gridmet_prec_prevYr_' + prevYear,
-          folder:'GEE_Surfaces',
-          crs: 'EPSG:4326',
-          scale: 10,
-          region: mask_geometry
-        });
-      } // END PREC PY
-      //----------------------------------------------------------------
-      // Growing Degree Days
-      //----------------------------------------------------------------
-      // GDD CY
-      if(gddCY==1){
-        var grow_yr = CY;
-        // Calculate GDD Function
-        var gdd = function(image){
-          var days = image.expression('(tmmn + tmmx)/2 - (0 + 273.15)', {
-            'tmmn': image.select('tmmn'),
-            'tmmx': image.select('tmmx')
-          });
-          return days.rename(['gdd']).updateMask(days.gt(0));
-        };
-        //use this block for gdd from jan 1 to mar 30 of current yr (current year)
-        var gdd_cy = gridmet 
-          .filterDate(grow_yr.toString(), (grow_yr + 1).toString())
-          .filter(ee.Filter.dayOfYear(1, 90))
-          .map(gdd)
-          .sum();
-        // Clip GDD images
-        var mask = ee.FeatureCollection(farm_name);
-        var mask_geometry = mask.geometry().bounds();
-        var gdd_cy_clip =  gdd_cy.clip(mask); 
-        //export to google drive
-        Export.image.toDrive({
-          image: gdd_cy_clip, //
-          description: current_farm + '_4km_gridmet_gdd_currYr_' + grow_yr, 
-          folder:'GEE_Surfaces',
-          crs: 'EPSG:4326',
-          scale: 10,
-          region: mask_geometry
-        });
-      } // END CY GDD
-      //----------------------------------------------------------------
-      // GDD PY
-      if(gddPY==1){
-        var grow_PrevYr = PY;
-        // Calculate GDD Function
-        var gdd = function(image){
-          var days = image.expression('(tmmn + tmmx)/2 - (0 + 273.15)', {
-            'tmmn': image.select('tmmn'),
-            'tmmx': image.select('tmmx')
-          });
-          return days.rename(['gdd']).updateMask(days.gt(0));
-        };
-        // use this block for gdd from jan 1 thru jun 30 of prev grow yr (prev yr)
-        var gdd_py = gridmet
-          .filterDate(grow_PrevYr.toString(), (grow_PrevYr + 1).toString())
-          .filter(ee.Filter.dayOfYear(1, 180))
-          .map(gdd)
-          .sum();
-        // Clip GDD images
-        var mask = ee.FeatureCollection(farm_name);
-        var mask_geometry = mask.geometry().bounds();
-        var gdd_py_clip = gdd_py.clip(mask); //
-        //export to google drive
-        Export.image.toDrive({
-          image: gdd_py_clip, 
-          description: current_farm + '_4km_gridmet_gdd_prevYr_' + grow_PrevYr, 
-          folder:'GEE_Surfaces',
-          crs: 'EPSG:4326',
-          scale: 10,
-          region: mask_geometry
-        });
-      } // END PY GDD
-      //---------------------------------------------------------
-    } // END IF USA
+    // Climate variables in the USA colleceted from UofIdaho
+    // GRIDMET dataset (4km)
+    //----------------------------------------------------------------
+    // Precipitation
+    //----------------------------------------------------------------
+    // PREC CY 
+    if(precCY==1){
+      //use month-day of 11-01 and 03-30 for prec thru march of current grow yr, 
+      var currYear = CY;
+      var startDate = PY + '-11-01';
+      var endDate =  CY + '-03-30';
+      // select for precip data
+      var precip = gridmet.select('pr')
+        .filterDate(startDate, endDate)
+        .sum();
+      // Clip Precip images
+      var mask = ee.FeatureCollection(farm_name);
+      var mask_geometry = mask.geometry().bounds();
+      var precip_sum_cy_clipped = precip.clip(mask);
+      //export to google drive        
+      Export.image.toDrive({
+        image: precip_sum_cy_clipped,
+        description: current_farm + '_4km_gridmet_prec_currYr_' + currYear,
+        folder:'GEE_Surfaces',
+        crs: 'EPSG:4326', // saves it as long lat wgs84 (reprojected for spatial analysis)
+        scale: 10,
+        region: mask_geometry
+      });
+    } // END PREC CY
+    //----------------------------------------------------------------
+    // PREC PY
+    if(precPY==1){
+      //use 11-01 and 10-31 for prev grow yr
+      var prevYear = PY;
+      var startDate = PY-1 +'-11-01';
+      var endDate =  PY + '-10-31';
+      // select for precip data
+      var precip = gridmet.select('pr')
+        .filterDate(startDate, endDate)
+        .sum();
+      // Clip Precip images
+      var mask = ee.FeatureCollection(farm_name);
+      var mask_geometry = mask.geometry().bounds();
+      var precip_sum_py_clipped = precip.clip(mask);
+      //export to google drive
+      Export.image.toDrive({
+        image: precip_sum_py_clipped,
+        description: current_farm + '_4km_gridmet_prec_prevYr_' + prevYear,
+        folder:'GEE_Surfaces',
+        crs: 'EPSG:4326',
+        scale: 10,
+        region: mask_geometry
+      });
+    } // END PREC PY
+    //----------------------------------------------------------------
+    // Growing Degree Days
+    //----------------------------------------------------------------
+    // GDD CY
+    if(gddCY==1){
+      var grow_yr = CY;
+      //use this block for gdd from jan 1 to mar 30 of current yr (current year)
+      var gdd_cy = gridmet 
+        .filterDate(grow_yr.toString(), (grow_yr + 1).toString())
+        .filter(ee.Filter.dayOfYear(1, 90))
+        .map(gdd)
+        .sum();
+      // Clip GDD images
+      var mask = ee.FeatureCollection(farm_name);
+      var mask_geometry = mask.geometry().bounds();
+      var gdd_cy_clip =  gdd_cy.clip(mask); 
+      //export to google drive
+      Export.image.toDrive({
+        image: gdd_cy_clip, //
+        description: current_farm + '_4km_gridmet_gdd_currYr_' + grow_yr, 
+        folder:'GEE_Surfaces',
+        crs: 'EPSG:4326',
+        scale: 10,
+        region: mask_geometry
+      });
+    } // END CY GDD
+    //----------------------------------------------------------------
+    // GDD PY
+    if(gddPY==1){
+      var grow_PrevYr = PY;
+      // use this block for gdd from jan 1 thru jun 30 of prev grow yr (prev yr)
+      var gdd_py = gridmet
+        .filterDate(grow_PrevYr.toString(), (grow_PrevYr + 1).toString())
+        .filter(ee.Filter.dayOfYear(1, 180))
+        .map(gdd)
+        .sum();
+      // Clip GDD images
+      var mask = ee.FeatureCollection(farm_name);
+      var mask_geometry = mask.geometry().bounds();
+      var gdd_py_clip = gdd_py.clip(mask); //
+      //export to google drive
+      Export.image.toDrive({
+        image: gdd_py_clip, 
+        description: current_farm + '_4km_gridmet_gdd_prevYr_' + grow_PrevYr, 
+        folder:'GEE_Surfaces',
+        crs: 'EPSG:4326',
+        scale: 10,
+        region: mask_geometry
+      });
+    } // END PY GDD
     //---------------------------------------------------------
     ///////////////////////////////////////////////////////////
     // VARIABLES FROM ELEVATION DATASETS (ELEV,SLOPE,ASPECT,TPI)
     ///////////////////////////////////////////////////////////
-    if(farms[i]=='loewen_steinbach'){
-      //---------------------------------------------------------
-      // CANADIAN ELEVATION MODEL
-      // 3/4 arc second resolution (~23 m)
-      //---------------------------------------------------------
-      var year = CY;
-      // ELEVATION
-      if(elev==1){
-        var ced_ic = cdem.select('elevation');
-        var ced = ced_ic.mean();
-        var mask = farm_name;
-        var mask_geometry = mask.geometry().bounds();
-        var ced_clip = ced.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: ced_clip,  //
-          description: current_farm + '_elev_cdem_20m_' + year, // 
-          folder:'GEE_Surfaces',
-          scale: 20,
-          crs: 'EPSG:4326',
-          region: mask_geometry
-        });
-      }
-      // ASPECT_RAD
-      if(aspect==1){
-        // Define a function to convert from degrees to radians for aspect
-        var radians = function(img) {
-          return img.toFloat().multiply(Math.PI).divide(180);
-        };
-        var dem = srtm.select('elevation');
-        var aspectDeg = ee.Terrain.aspect(dem);
-        var aspect_rad = radians(aspectDeg.select('aspect')).float();
-        var mask = farm_name;
-        var mask_geometry = mask.geometry().bounds();
-        var aspect_rad_clip = aspect_rad.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: aspect_rad_clip,  
-          description: current_farm + '_aspect_rad_srtm_30m_' + year, 
-          folder:'GEE_Surfaces',
-          scale: 30,
-          crs: 'EPSG:4326',
-          region: mask_geometry
-        });
-      }
-      // SLOPE
-      if(slopeI==1){
-        var dem = srtm.select('elevation');
-        var slope = ee.Terrain.slope(dem).float();
-        var mask = farm_name;
-        var mask_geometry = mask.geometry().bounds();
-        var slope_clip = slope.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: slope_clip,  //
-          description: current_farm + '_slope_srtm_30m_' + year, // 
-          folder:'GEE_Surfaces',
-          scale: 30,
-          crs: 'EPSG:4326',
-          region: mask_geometry
-        });
-      }
-      // TPI 30m
-      if(tpiI==1){
-        // calculate TPI
-        var scale = 30; // scale in m
-        var tpi_radius = 9*scale; // 3 * 30m = 270m radius.
-        var tpi = srtm.subtract(srtm.focal_mean(tpi_radius, 'circle', 'meters')).add(0.5);
-        var mask = farm_name;
-        var mask_geometry = mask.geometry().bounds();
-        var tpi_clip = tpi.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: tpi_clip,  // 
-          description: current_farm + '_tpi_srtm_30m_' + year, //
-          folder:'GEE_Surfaces',
-          scale: 30,
-          crs: 'EPSG:4326',
-          region: mask_geometry
-        });
-      }
-      //---------------------------------------------------------
-    }else{ // END IF CANADIAN FARM
-      //---------------------------------------------------------
-      // USGS NATIONAL ELEVATION DATASET
-      // downloads elevation data, calculates slope, aspect, tpi from USGS National 
-      // Elevation Dataset (NED); 
-      // @ 1/3 arc-second resolution (10m) clipped to farm boundary box
-      //---------------------------------------------------------
-      var year = CY;
-      // ELEVATION
-      if(elev==1){
-        var mask = farm_name;
-        var mask_geometry = mask.geometry().bounds();
-        var dem_clip = ned.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: dem_clip,  //
-          description: current_farm + '_elev_ned_10m_' + year, // 
-          folder:'GEE_Surfaces',
-          scale: 10,
-          crs: 'EPSG:4326',
-          region: mask_geometry
-        });
-      }
-      // ASPECT_RAD
-      if(aspect==1){
-        // Define a function to convert from degrees to radians for aspect
-        var radians = function(img) {
-          return img.toFloat().multiply(Math.PI).divide(180);
-        };
-        var terrain = ee.Algorithms.Terrain(ned); // Calculates slope, aspect, and a simple hillshade from a terrain DEM.
-        var aspect_rad = radians(terrain.select('aspect')).float();
-        var mask = farm_name;
-        var mask_geometry = mask.geometry().bounds();
-        var aspect_rad_clip = aspect_rad.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: aspect_rad_clip,  
-          description: current_farm + '_aspect_rad_ned_10m_' + year, 
-          folder:'GEE_Surfaces',
-          scale: 10,
-          crs: 'EPSG:4326',
-          region: mask_geometry
-        });
-      }
-      // SLOPE
-      if(slopeI==1){
-        var terrain = ee.Algorithms.Terrain(ned); // Calculates slope, aspect, and a simple hillshade from a terrain DEM.
-        var slope = terrain.select('slope').float();
-        var mask = farm_name;
-        var mask_geometry = mask.geometry().bounds();
-        var slope_clip = slope.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: slope_clip,  //
-          description: current_farm + '_slope_ned_10m_' + year, // 
-          folder:'GEE_Surfaces',
-          scale: 10,
-          crs: 'EPSG:4326',
-          region: mask_geometry
-        });
-      }
-      // TPI 30m
-      if(tpiI==1){
-        // calculate TPI
-        var scale = 10; // scale in m
-        var tpi_radius = 3*scale; // 3 * 10m = 30m res.
-        var tpi = ned.subtract(ned.focal_mean(tpi_radius, 'circle', 'meters')).add(0.5);
-        var mask = farm_name;
-        var mask_geometry = mask.geometry().bounds();
-        var tpi_clip = tpi.clip(mask);
-        //export to google drive
-        Export.image.toDrive({
-          image: tpi_clip,  // 
-          description: current_farm + '_tpi_ned_10m_' + year, //
-          folder:'GEE_Surfaces',
-          scale: 10,
-          crs: 'EPSG:4326',
-          region: mask_geometry
-        });
-      }
-      //---------------------------------------------------------
-    } // END IF USA FARM
+    //---------------------------------------------------------
+    // USGS NATIONAL ELEVATION DATASET
+    // downloads elevation data, calculates slope, aspect, tpi from USGS National 
+    // Elevation Dataset (NED); 
+    // @ 1/3 arc-second resolution (10m) clipped to farm boundary box
+    //---------------------------------------------------------
+    var year = CY;
+    // ELEVATION
+    if(elev==1){
+      var mask = farm_name;
+      var mask_geometry = mask.geometry().bounds();
+      var dem_clip = ned.clip(mask);
+      //export to google drive
+      Export.image.toDrive({
+        image: dem_clip,  //
+        description: current_farm + '_elev_ned_10m_' + year, // 
+        folder:'GEE_Surfaces',
+        scale: 10,
+        crs: 'EPSG:4326',
+        region: mask_geometry
+      });
+    }
+    // ASPECT_RAD
+    if(aspect==1){
+      var terrain = ee.Algorithms.Terrain(ned); // Calculates slope, aspect, and a simple hillshade from a terrain DEM.
+      var aspect_rad = radians(terrain.select('aspect')).float();
+      var mask = farm_name;
+      var mask_geometry = mask.geometry().bounds();
+      var aspect_rad_clip = aspect_rad.clip(mask);
+      //export to google drive
+      Export.image.toDrive({
+        image: aspect_rad_clip,  
+        description: current_farm + '_aspect_rad_ned_10m_' + year, 
+        folder:'GEE_Surfaces',
+        scale: 10,
+        crs: 'EPSG:4326',
+        region: mask_geometry
+      });
+    }
+    // SLOPE
+    if(slopeI==1){
+      var terrain = ee.Algorithms.Terrain(ned); // Calculates slope, aspect, and a simple hillshade from a terrain DEM.
+      var slope = terrain.select('slope').float();
+      var mask = farm_name;
+      var mask_geometry = mask.geometry().bounds();
+      var slope_clip = slope.clip(mask);
+      //export to google drive
+      Export.image.toDrive({
+        image: slope_clip,  //
+        description: current_farm + '_slope_ned_10m_' + year, // 
+        folder:'GEE_Surfaces',
+        scale: 10,
+        crs: 'EPSG:4326',
+        region: mask_geometry
+      });
+    }
+    // TPI 30m
+    if(tpiI==1){
+      // calculate TPI
+      var scale = 10; // scale in m
+      var tpi_radius = 3*scale; // 3 * 10m = 30m res.
+      var tpi = ned.subtract(ned.focal_mean(tpi_radius, 'circle', 'meters')).add(0.5);
+      var mask = farm_name;
+      var mask_geometry = mask.geometry().bounds();
+      var tpi_clip = tpi.clip(mask);
+      //export to google drive
+      Export.image.toDrive({
+        image: tpi_clip,  // 
+        description: current_farm + '_tpi_ned_10m_' + year, //
+        folder:'GEE_Surfaces',
+        scale: 10,
+        crs: 'EPSG:4326',
+        region: mask_geometry
+      });
+    }
     //---------------------------------------------------------
     ///////////////////////////////////////////////////////////
     // SMAP - Soil Moisture Active Passive (20km )
@@ -632,20 +567,6 @@ for(j; j < years.length; j++){
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         // s2_filter: filters all avail sentinel 2 (s2) images: limit spatial extent 
         // to the boundary and filter date range by start and end vars defined above
-        // Function to mask clouds using the Sentinel-2 QA band.
-        var maskS2clouds = function(image) {
-          var qa = image.select('QA60');
-          // Bits 10 and 11 are clouds and cirrus, respectively.
-          var cloudBitMask = 1 << 10;
-          var cirrusBitMask = 1 << 11;
-          // Both flags should be set to zero, indicating clear conditions.
-          var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
-                     qa.bitwiseAnd(cirrusBitMask).eq(0));
-          // Return the masked and scaled data, without the QA bands.
-          return image.updateMask(mask).divide(10000)
-              .select("B.*")
-              .copyProperties(image, ["system:time_start"]);
-        };
         var s2toa_filterCY = s2toa
           .filterBounds(farm_name)
           .filterDate(start, end)
@@ -677,17 +598,6 @@ for(j; j < years.length; j++){
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         // Landsat 8 (10 m)
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-        var maskL8sr = function(image) {
-            // Bits 3 and 5 are cloud shadow and cloud, respectively.
-            var cloudShadowBitMask = (1 << 3);
-            var cloudsBitMask = (1 << 5);
-            // Get the pixel QA band.
-            var qa = image.select('pixel_qa');
-            // Both flags should be set to zero, indicating clear conditions.
-            var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
-                      .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
-            return image.updateMask(mask);
-          };
           var L8SRCY_filter = L8sr
             .filterBounds(farm_name)
             .filterDate(start, end)
@@ -717,18 +627,6 @@ for(j; j < years.length; j++){
         // LANDSAT 5 (1999py to 2012cy)
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         if(CY <= 2012){ 
-          // calculates ndvi @ 30m resolution from Landsat 5 surface reflectance
-          var cloudMaskL457 = function(image) {
-            var qa = image.select('pixel_qa');
-            // If the cloud bit (5) is set and the cloud confidence (7) is high
-            // or the cloud shadow bit is set (3), then it's a bad pixel.
-            var cloud = qa.bitwiseAnd(1 << 5)
-                      .and(qa.bitwiseAnd(1 << 7))
-                      .or(qa.bitwiseAnd(1 << 3));
-            // Remove edge pixels that don't occur in all bands
-            var mask2 = image.mask().reduce(ee.Reducer.min());
-            return image.updateMask(cloud.not()).updateMask(mask2);
-          };
           var L5SRCY_filter = L5sr
             .filterBounds(farm_name)
             .filterDate(start, end)
@@ -758,18 +656,6 @@ for(j; j < years.length; j++){
         // LANDSAT 7 (2012py & 2013cy)
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         if(CY == 2013){ 
-          // calculates ndvi @ 30m resolution from Landsat 7 surface reflectance
-          var cloudMaskL457 = function(image) {
-            var qa = image.select('pixel_qa');
-            // If the cloud bit (5) is set and the cloud confidence (7) is high
-            // or the cloud shadow bit is set (3), then it's a bad pixel.
-            var cloud = qa.bitwiseAnd(1 << 5)
-                      .and(qa.bitwiseAnd(1 << 7))
-                      .or(qa.bitwiseAnd(1 << 3));
-            // Remove edge pixels that don't occur in all bands
-            var mask2 = image.mask().reduce(ee.Reducer.min());
-            return image.updateMask(cloud.not()).updateMask(mask2);
-          };
           var L7SRCY_filter = L7sr
             .filterBounds(farm_name)
             .filterDate(start, end)
@@ -799,17 +685,6 @@ for(j; j < years.length; j++){
         // LANDSAT 8 (2013py (april - dec) to 2018cy or 2016py)
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         if(CY >= 2014){ 
-          var maskL8sr = function(image) {
-            // Bits 3 and 5 are cloud shadow and cloud, respectively.
-            var cloudShadowBitMask = (1 << 3);
-            var cloudsBitMask = (1 << 5);
-            // Get the pixel QA band.
-            var qa = image.select('pixel_qa');
-            // Both flags should be set to zero, indicating clear conditions.
-            var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
-                      .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
-            return image.updateMask(mask);
-          };
           var L8SRCY_filter = L8sr
             .filterBounds(farm_name)
             .filterDate(start, end)
@@ -851,20 +726,6 @@ for(j; j < years.length; j++){
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         // s2_filter: filters all avail sentinel 2 (s2) images: limit spatial extent 
         // to the boundary and filter date range by start and end vars defined above
-        // Function to mask clouds using the Sentinel-2 QA band.
-        var maskS2clouds = function(image) {
-          var qa = image.select('QA60');
-          // Bits 10 and 11 are clouds and cirrus, respectively.
-          var cloudBitMask = 1 << 10;
-          var cirrusBitMask = 1 << 11;
-          // Both flags should be set to zero, indicating clear conditions.
-          var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
-                     qa.bitwiseAnd(cirrusBitMask).eq(0));
-          // Return the masked and scaled data, without the QA bands.
-          return image.updateMask(mask).divide(10000)
-              .select("B.*")
-              .copyProperties(image, ["system:time_start"]);
-        };
         var s2toa_filterPY = s2toa
           .filterBounds(farm_name)
           .filterDate(start, end)
@@ -896,17 +757,6 @@ for(j; j < years.length; j++){
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         // Landsat 8 (30m)
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-        var maskL8sr = function(image) {
-          // Bits 3 and 5 are cloud shadow and cloud, respectively.
-          var cloudShadowBitMask = (1 << 3);
-          var cloudsBitMask = (1 << 5);
-          // Get the pixel QA band.
-          var qa = image.select('pixel_qa');
-          // Both flags should be set to zero, indicating clear conditions.
-          var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
-                  .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
-          return image.updateMask(mask);
-        };
         var L8SRPY_filter = L8sr
           .filterBounds(farm_name)
           .filterDate(start, end)
@@ -936,18 +786,6 @@ for(j; j < years.length; j++){
         // LANDSAT 5 (1999py & 2012cy)
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         if(PY <= 2011){ 
-          // calculates ndvi @ 30m resolution from Landsat 5 surface reflectance
-          var cloudMaskL457 = function(image) {
-            var qa = image.select('pixel_qa');
-            // If the cloud bit (5) is set and the cloud confidence (7) is high
-            // or the cloud shadow bit is set (3), then it's a bad pixel.
-            var cloud = qa.bitwiseAnd(1 << 5)
-                      .and(qa.bitwiseAnd(1 << 7))
-                      .or(qa.bitwiseAnd(1 << 3));
-            // Remove edge pixels that don't occur in all bands
-            var mask2 = image.mask().reduce(ee.Reducer.min());
-            return image.updateMask(cloud.not()).updateMask(mask2);
-          };
           var L5SRPY_filter = L5sr
             .filterBounds(farm_name)
             .filterDate(start, end)
@@ -977,18 +815,6 @@ for(j; j < years.length; j++){
         // LANDSAT 7 (2012py & 2013cy)
         //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
         if(PY == 2012){ 
-          // calculates ndvi @ 30m resolution from Landsat 7 surface reflectance
-          var cloudMaskL457 = function(image) {
-            var qa = image.select('pixel_qa');
-            // If the cloud bit (5) is set and the cloud confidence (7) is high
-            // or the cloud shadow bit is set (3), then it's a bad pixel.
-            var cloud = qa.bitwiseAnd(1 << 5)
-                      .and(qa.bitwiseAnd(1 << 7))
-                      .or(qa.bitwiseAnd(1 << 3));
-            // Remove edge pixels that don't occur in all bands
-            var mask2 = image.mask().reduce(ee.Reducer.min());
-            return image.updateMask(cloud.not()).updateMask(mask2);
-          };
           var L7SRPY_filter = L7sr
             .filterBounds(farm_name)
             .filterDate(start, end)
@@ -1022,17 +848,6 @@ for(j; j < years.length; j++){
             //CHANGE DATES TO APRIL TO DEC
             var start13 = ee.Date(year+'-04-01');
             var end13 = ee.Date(year+'-12-31'); //
-            var maskL8sr = function(image) {
-              // Bits 3 and 5 are cloud shadow and cloud, respectively.
-              var cloudShadowBitMask = (1 << 3);
-              var cloudsBitMask = (1 << 5);
-              // Get the pixel QA band.
-              var qa = image.select('pixel_qa');
-              // Both flags should be set to zero, indicating clear conditions.
-              var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
-                      .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
-              return image.updateMask(mask);
-            };
             var L8SRPY_filter = L8sr
               .filterBounds(farm_name)
               .filterDate(start13, end13)
@@ -1059,17 +874,6 @@ for(j; j < years.length; j++){
             });
           }else{ // end if PY == 2013
             // USE NORMAL DATES (JAN TO DEC)
-            var maskL8sr = function(image) {
-              // Bits 3 and 5 are cloud shadow and cloud, respectively.
-              var cloudShadowBitMask = (1 << 3);
-              var cloudsBitMask = (1 << 5);
-              // Get the pixel QA band.
-              var qa = image.select('pixel_qa');
-              // Both flags should be set to zero, indicating clear conditions.
-              var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
-                      .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
-              return image.updateMask(mask);
-            };
             var L8SRPY_filter = L8sr
               .filterBounds(farm_name)
               .filterDate(start, end)
@@ -1115,20 +919,6 @@ for(j; j < years.length; j++){
         // calculates ndre @ 10m resolution from Sentinel-2 
         // s2_filter: filters all avail sentinel 2 (s2) images: limit spatial extent 
         // to the boundary and filter date range by start and end vars defined above
-        // Function to mask clouds using the Sentinel-2 QA band.
-        var maskS2clouds = function(image) {
-          var qa = image.select('QA60');
-          // Bits 10 and 11 are clouds and cirrus, respectively.
-          var cloudBitMask = 1 << 10;
-          var cirrusBitMask = 1 << 11;
-          // Both flags should be set to zero, indicating clear conditions.
-          var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
-                     qa.bitwiseAnd(cirrusBitMask).eq(0));
-          // Return the masked and scaled data, without the QA bands.
-          return image.updateMask(mask).divide(10000)
-              .select("B.*")
-              .copyProperties(image, ["system:time_start"]);
-        };
         var s2toa_filterCY = s2toa
           .filterBounds(farm_name)
           .filterDate(start, end)
@@ -1174,20 +964,6 @@ for(j; j < years.length; j++){
         // s2_filter: filters all avail sentinel 2 (s2) images: limit spatial extent 
         // to the boundary and filter date range by start and end vars defined above
         ///// PY TOA S2 w/filter /////
-        // Function to mask clouds using the Sentinel-2 QA band.
-        var maskS2clouds = function(image) {
-          var qa = image.select('QA60');
-          // Bits 10 and 11 are clouds and cirrus, respectively.
-          var cloudBitMask = 1 << 10;
-          var cirrusBitMask = 1 << 11;
-          // Both flags should be set to zero, indicating clear conditions.
-          var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
-                     qa.bitwiseAnd(cirrusBitMask).eq(0));
-          // Return the masked and scaled data, without the QA bands.
-          return image.updateMask(mask).divide(10000)
-              .select("B.*")
-              .copyProperties(image, ["system:time_start"]);
-        };
         var s2toa_filterPY = s2toa
           .filterBounds(farm_name)
           .filterDate(start, end)
@@ -1235,20 +1011,6 @@ for(j; j < years.length; j++){
         // calculates clre @ 10m resolution from Sentinel-2 
         // s2_filter: filters all avail sentinel 2 (s2) images: limit spatial extent 
         // to the boundary and filter date range by start and end vars defined above
-        // Function to mask clouds using the Sentinel-2 QA band.
-        var maskS2clouds = function(image) {
-          var qa = image.select('QA60');
-          // Bits 10 and 11 are clouds and cirrus, respectively.
-          var cloudBitMask = 1 << 10;
-          var cirrusBitMask = 1 << 11;
-          // Both flags should be set to zero, indicating clear conditions.
-          var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
-                     qa.bitwiseAnd(cirrusBitMask).eq(0));
-          // Return the masked and scaled data, without the QA bands.
-          return image.updateMask(mask).divide(10000)
-              .select("B.*")
-              .copyProperties(image, ["system:time_start"]);
-        };
         var s2toa_filterCY = s2toa
           .filterBounds(farm_name)
           .filterDate(start, end)
@@ -1293,20 +1055,6 @@ for(j; j < years.length; j++){
         // calculates clre @ 10m resolution from Sentinel-2 
         // s2_filter: filters all avail sentinel 2 (s2) images: limit spatial extent 
         // to the boundary and filter date range by start and end vars defined above
-        // Function to mask clouds using the Sentinel-2 QA band.
-        var maskS2clouds = function(image) {
-          var qa = image.select('QA60');
-          // Bits 10 and 11 are clouds and cirrus, respectively.
-          var cloudBitMask = 1 << 10;
-          var cirrusBitMask = 1 << 11;
-          // Both flags should be set to zero, indicating clear conditions.
-          var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
-                     qa.bitwiseAnd(cirrusBitMask).eq(0));
-          // Return the masked and scaled data, without the QA bands.
-          return image.updateMask(mask).divide(10000)
-              .select("B.*")
-              .copyProperties(image, ["system:time_start"]);
-        };
         var s2toa_filterPY = s2toa
           .filterBounds(farm_name)
           .filterDate(start, end)
