@@ -14,10 +14,9 @@
 //L5sr = ee.ImageCollection("LANDSAT/LT05/C01/T1_SR"),
 //L8sr = ee.ImageCollection("LANDSAT/LC08/C01/T1_SR"),
 //smap = ee.ImageCollection('NASA_USDA/HSL/SMAP_soil_moisture'),
-//daymet = ee.ImageCollection('NASA/ORNL/DAYMET_V3'); // //s2sr = ee.ImageCollection("COPERNICUS/S2_SR"),
+//daymet = ee.ImageCollection('NASA/ORNL/DAYMET_V3'); // 
 
-
-// THIS VERSION COLLECTS DAYMET FOR USA FARMS b/c 1km RESOLUTION
+// Note that not all of the sources above are used, but are options.
 
 // This code is for looping through a sequence of specified years for all farms 
 // and downloading all GEE variables for a specified year. The code takes the user selected years
@@ -33,28 +32,28 @@
 // User also has control over what variables to collect so not all vars are collected if not desired.
 
 // Precipitation and growing degree day information is collected from GRIDMET by the Idaho EPSCoR project
-// and is 4 km resolution with data available from 1979. The surfaces data is collected from the USGS
+// and is 4 km resolution with data available from 1979. It is also collected from Daymet V3, by the 
+// NASA ORNL group, which is preferred due to it's 1km reolution. The surfaces data is collected from the USGS
 // National Elevation Dataset at a 10 m scale from prior to 1999. The vegetation index data is collected
 // from different sources based on the date requested. All data 2018 or later are 10 m resolution filtered 
 // top of atmosphere measures from the EU's Copernicus Sentinel 2. Prior to 2018 cy and 2016 py, data
 // is collected from Landsat 5 if before 2012, Landsat 7 for 2012/2013, and Landsat 8 for after. 
 // Landsat 8 is collected until present to gap fill. S2 provides NDRE and CLRE (should be CIRE) bands for calculating. 
-// For Canadian farms the data is collected from NASA ORNL DaymetV3 at a 1km scale. These are estimates.
-// Elevation data is from the National ELevaiton dataset at 10m scale for the USA and 
-// from the Canadian Digital Elevation Model at a 20m scale for elevation and SRTM from NASA
+// For Canadian farms the data is collected from NASA ORNL DaymetV3 at a 1km scale exclusively because the 
+// USGS NED is not available. These are estimates. Elevation data is from the National Elevaiton dataset at
+// 10m scale for the USA and from the Canadian Digital Elevation Model at a 20m scale for elevation and SRTM from NASA
 // at a 30m scale for slope, aspect, tpi.
 
 // NAMING CONVENTION
-// The naming convention for these files are important for the import of the data to the database.
+// The naming convention for these files are important for the import of the data to the OFPE database.
 // The import code is relatively rigid because this GEE data is under our control and we can name
 // and format how we like. The import code gathers information about the data from the name of the 
 // file so the naming convention becomes important. It would be easiest if these were not changed.
 // GENERAL FORMAT: farmname(sep="_")_measure_datasource_scale_year_(mar) <- only include if for current year, otherwise blank
 // PREC & GDD FORMAT: farmname(sep="_")_scale_datasource_measure_(currYear/prevYear)_year <- currYear&prevYear are to indicate to mar or full
-// e.g. “wood_carter_clre_20m_2013_mar” = 20 m resolution clre data from 2013 up until 03/30 for wood's fields near carter
-// or   “merja_vaughn_4km_gdd_prevYr_2018” = 4km gdd data from 2018 for merja's fields near vaughn
-// IMPORTANT: If you change the name of any variable in the filenames or if you use a new scale (i.e. not 4km,
-// 10m, or 20m) you MUST EDIT CODE to change string patterns in functions. 
+// e.g. “<farmer>_<farmname>_clre_20m_2013_mar” = 20 m resolution clre data from 2013 up until 03/30 for <farmer>'s fields at <farmname>
+// or   “<farmer>_<farmname>_4km_gdd_prevYr_2018” = 4km gdd data from 2018 for <farmer>'s fields at <farmname>
+// IMPORTANT: If you change the name of any variable in the filenames, or if you use a new scale, check the GEE import script source code for compatibility.
 
 
 //----------------------------------------------------------------
@@ -80,10 +79,9 @@ var smapPY = 1;
 
 // String or sequence of years to get data for
 var years = ['2000','2001','2002','2003','2004','2005','2006','2007','2008','2009','2010','2011','2012','2013','2014','2015','2016','2017','2018','2019','2020'];
-//var years = ['2018','2019','2020'];
 
 // String of farms (assets that are ingested already) to loop over (NEED to add others when you have them)
-var farms = ['<farmer>_<farmname>']; //
+var farms = ['<farmer>_<farmname>','<farmer>_<farmname>','<farmer>_<farmname>', etc.]; //
 //****************************************************************
 // START CODE
 //****************************************************************
@@ -100,7 +98,8 @@ for(j; j < years.length; j++){
     //****************************************************************
     // set up assets
     //****************************************************************
-    var table = ee.FeatureCollection("users/paulhegedus/" + farms[i] + "_bbox");
+    var table = ee.FeatureCollection("users/<GOOGLE DRIVE USERNAME>/" + farms[i] + "_bbox"); 
+    // ^IMPORTANT^: Modify this path as needed. For example, remove "_bbox" if that is not in your asset names.
     var farm_name = table;
     var current_farm = farms[i];
     //Map.addLayer(farm_name,{}, current_farm + '_bbox', true);
