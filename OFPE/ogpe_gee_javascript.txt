@@ -25,7 +25,7 @@
 // 1 minus the least recent year specified in the user selection. The user can select a sequence of years
 // in order, or a string of years to download data for. This code was developed for efficiently downloading
 // previous years data from GEE. However, because the user can specify specific years, this code can be used as
-// the annual run once per year (not ofpe_test/allFarms_singleYear data) and will download all the variables 
+// the annual run once per year and will download all the variables 
 // needed for all the farms for the current year (up to mar) and previous year (full year) when 1 year is specified.
 // In the database these are distinguished by a column labeled 'mar' or 'full' for up to march
 // and full year, respectively. Note that water years are from november 1 to october 31. 
@@ -45,15 +45,21 @@
 // at a 30m scale for slope, aspect, tpi.
 
 // NAMING CONVENTION
-// The naming convention for these files are important for the import of the data to the OFPE database.
-// The import code is relatively rigid because this GEE data is under our control and we can name
-// and format how we like. The import code gathers information about the data from the name of the 
-// file so the naming convention becomes important. It would be easiest if these were not changed.
-// GENERAL FORMAT: farmname(sep="_")_measure_datasource_scale_year_(mar) <- only include if for current year, otherwise blank
-// PREC & GDD FORMAT: farmname(sep="_")_scale_datasource_measure_(currYear/prevYear)_year <- currYear&prevYear are to indicate to mar or full
-// e.g. “<farmer>_<farmname>_clre_20m_2013_mar” = 20 m resolution clre data from 2013 up until 03/30 for <farmer>'s fields at <farmname>
-// or   “<farmer>_<farmname>_4km_gdd_prevYr_2018” = 4km gdd data from 2018 for <farmer>'s fields at <farmname>
-// IMPORTANT: If you change the name of any variable in the filenames, or if you use a new scale, check the GEE import script source code for compatibility.
+// The naming convention for these files are important for the import of the data to the OFPE database. 
+// Again, you need to have a Google Drive folder set up with a folder called 'GEE_Surfaces' to receive these files.
+// See this [tutorial](gd_setup.html) if not set up already. The import code is relatively rigid because this 
+// GEE data is under our control and we can nameand format how we like. The import code gathers information about 
+// the data from the name of the file so the naming convention becomes important. It would be easiest if these
+// were not changed.
+
+// GENERAL FORMAT: <farmername>_<scale>_<datasource>_<measure>_<current/previous year>_<year>_<loy>. 
+// e.g. “<farmer>_<farmname>_clre_20m_2013_mar” = 
+// 20 m resolution clre data from 2013 up until 03/30 for <farmer>'s fields at <farmname>
+// *or*  “<farmer>_<farmname>_4km_gdd_prevYr_2018” = 
+// 4km gdd data from 2018 for <farmer>'s fields at <farmname>
+
+// IMPORTANT: If you change the name of any variable in the filenames, or if you use a new scale, 
+// check the GEE import script source code for compatibility.
 
 
 //----------------------------------------------------------------
