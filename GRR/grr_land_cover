@@ -3,8 +3,8 @@
 //
 // From USDA NASS Cropland Data Layers - 30m
 // See: https://developers.google.com/earth-engine/datasets/catalog/USDA_NASS_CDL
-// That link also has metadata for the data.
-// From USGS National Land Cover Database (NLCD)
+// From USGS National Land Cover Database (NLCD) - 30m
+// See: https://developers.google.com/earth-engine/datasets/catalog/USGS_NLCD#bands
 //
 // ASSETS
 //var cdl = ee.ImageCollection('USDA/NASS/CDL'),
