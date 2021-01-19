@@ -1,4 +1,6 @@
 # Google Earth Engine Code
+**TODO** Update OFPE code
+
 Paul Hegedus' Google Earth Engine (GEE) scripts. This repo includes Javascript code for various projects.
 
 
